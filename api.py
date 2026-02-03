@@ -4,12 +4,11 @@ import threading
 import uuid
 import hashlib
 import hmac
-import time
 from datetime import datetime
 from typing import Dict, Any, Tuple
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage, AIMessage
 from pymongo import MongoClient
@@ -108,11 +107,13 @@ def health() -> Dict[str, str]:
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest) -> ChatResponse:
+def chat(req: ChatRequest, request: Request) -> ChatResponse:
     state = _get_state(req.user_id, req.thread_id, req.reset)
 
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message is empty")
+    req_id = request.headers.get("x-request-id", "")
+    print(f"[API] chat req id={req_id} user_id={req.user_id} thread_id={req.thread_id} msg={repr(req.message)}", flush=True)
 
     user_msg = HumanMessage(content=req.message.strip())
     state["chat_history"].append(user_msg)
@@ -134,23 +135,7 @@ def chat(req: ChatRequest) -> ChatResponse:
     last_ai = next((m for m in reversed(hist) if isinstance(m, AIMessage)), None)
     if not last_ai:
         raise HTTPException(status_code=500, detail="no AI response generated")
-
-    # If supervisor is about to ask "start", wait for planner to persist plan.
-    content_text = str(last_ai.content or "")
-    if "bắt đầu" in content_text.lower() and not state.get("plan_ready"):
-        plan_ok = False
-        for _ in range(10):
-            time.sleep(3)
-            if _plan_ready(req.user_id, req.thread_id):
-                plan_ok = True
-                break
-        if not plan_ok:
-            return ChatResponse(
-                user_id=req.user_id,
-                thread_id=req.thread_id,
-                assistant_message="Đang tạo bài học, bạn đợi một chút nhé.",
-                should_exit=bool(state.get("should_exit")),
-            )
+    print(f"[API] last_ai.content={repr(last_ai.content)}", flush=True)
 
     return ChatResponse(
         user_id=req.user_id,

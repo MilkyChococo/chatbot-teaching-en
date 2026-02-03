@@ -48,8 +48,10 @@ def db_get_thread(user_id: str, thread_id: str) -> Dict[str, Any]:
     return memory_store.load_thread(user_id, thread_id)
 
 @tool(args_schema=UpdateThreadFieldsInput)
-def db_update_thread_fields(user_id: str, thread_id: str, fields_json: str):
-    """Update thread document fields in MongoDB using $set. fields_json must be a JSON-encoded string."""
-    fields = json.loads(fields_json) if fields_json else {}
+def db_update_thread_fields(user_id: str, thread_id: str, fields_json: str, fields: Optional[Dict[str, Any]] = None):
+    """Update thread document fields in MongoDB using $set. Accepts either fields_json (JSON string) or fields (dict)."""
+    # Support both payload styles: "fields_json" (string) or "fields" (dict)
+    if fields is None:
+        fields = json.loads(fields_json) if fields_json else {}
     memory_store.update_thread_fields(user_id, thread_id, fields)
     return {"ok": True, "updated_keys": list(fields.keys())}

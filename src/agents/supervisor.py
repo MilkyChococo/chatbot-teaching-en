@@ -50,7 +50,7 @@ Nhiệm vụ: điều phối hội thoại, thu thập lựa chọn chủ đề 
 NGUYÊN TẮC (voice-friendly)
 - Mỗi lượt chỉ 1 câu hỏi chính. Câu ngắn, rõ, dễ nghe bằng TTS.
 - Đưa lựa chọn tối đa 6 mục, ưu tiên 3 mục khi hỏi tiếp.
-- Luôn xác nhận lại lựa chọn của người học trước khi chuyển Planner.
+- Đủ thông tin rồi thì không hỏi và chuyển Planner.
 - Nếu thiếu thông tin: tự đặt mặc định thay vì hỏi quá nhiều.
 
 MỤC TIÊU TỐI THIỂU ĐỂ GỌI PLANNER
@@ -76,6 +76,11 @@ HƯỚNG DẪN ĐIỀU PHỐI
   (1) Trình độ - level : beginer / meddium / good
   (2) Mục tiêu - focus: listen / speak / both
   Nếu user không trả lời rõ → dùng mặc định.
+-Luôn phân tích câu và MAP về chuẩn để trích thông tin:
+-Ví dụ
+  - level: ""beginner/new/begin" -> beginner; "medium" -> medium; "good","well" -> good
+  - focus: "listen" -> listen; "speak" -> speak; "both" -> both
+  - selected_topic: "daily communication" -> Giao tiếp hằng ngày; "travel/trip/vacation" -> Du lịch; "work/job/office" -> Công việc; "study/school" -> Học tập; "health/healthy" -> Sức khoẻ; "entertainment/movie/music/game" -> Giải trí
 - Nếu level có giá trị (không rỗng) thì coi như đã biết level rồi, không hỏi lại và khi tạo payload chuyển Planner, dùng level = level.
 - Chủ đề mỗi ngày do user quyết định; KHÔNG tự dùng selected_topic cũ để tạo plan.
 - Nếu đã có level, bỏ qua hỏi level. Vẫn hỏi chọn topic và focus.
@@ -158,14 +163,75 @@ def _infer_topic_from_text(text: str) -> str:
         "giao tiep": "Giao tiep hang ngay",
         "hang ngay": "Giao tiep hang ngay",
         "du lich": "Du lich",
+        "travel": "Du lich",
+        "trip": "Du lich",
+        "vacation": "Du lich",
         "cong viec": "Cong viec",
+        "work": "Cong viec",
+        "job": "Cong viec",
+        "office": "Cong viec",
         "hoc tap": "Hoc tap",
+        "study": "Hoc tap",
+        "school": "Hoc tap",
         "suc khoe": "Suc khoe",
+        "health": "Suc khoe",
+        "healthy": "Suc khoe",
         "giai tri": "Giai tri",
+        "entertainment": "Giai tri",
+        "movie": "Giai tri",
+        "music": "Giai tri",
+        "game": "Giai tri",
     }
     for k, v in keywords.items():
         if k in t:
             return v
+    return ""
+
+def _infer_topic_from_ai(text: str) -> str:
+    t = (text or "").strip().lower()
+    if not t:
+        return ""
+    mapping = {
+        "giao tiếp": "Giao tiep hang ngay",
+        "giao tiep": "Giao tiep hang ngay",
+        "du lịch": "Du lich",
+        "du lich": "Du lich",
+        "công việc": "Cong viec",
+        "cong viec": "Cong viec",
+        "học tập": "Hoc tap",
+        "hoc tap": "Hoc tap",
+        "sức khoẻ": "Suc khoe",
+        "suc khoe": "Suc khoe",
+        "giải trí": "Giai tri",
+        "giai tri": "Giai tri",
+    }
+    for k, v in mapping.items():
+        if k in t:
+            return v
+    return ""
+
+def _infer_level_from_text(text: str) -> str:
+    t = (text or "").strip().lower()
+    if not t:
+        return ""
+    if "beginner" in t or "ngÆ°á»i má»›i" in t or "moi" in t:
+        return "beginer"
+    if "medium" in t or "trung bÃ¬nh" in t:
+        return "meddium"
+    if "good" in t or "nÃ¢ng cao" in t or "tá»‘t" in t:
+        return "good"
+    return ""
+
+def _infer_focus_from_text(text: str) -> str:
+    t = (text or "").strip().lower()
+    if not t:
+        return ""
+    if "both" in t or "cáº£ hai" in t or "ca hai" in t:
+        return "both"
+    if "listen" in t or "nghe" in t:
+        return "listen"
+    if "speak" in t or "nÃ³i" in t or "noi" in t:
+        return "speak"
     return ""
 
 def _is_empty(val) -> bool:
@@ -252,6 +318,19 @@ def _plan_for_current_day(thread_blob: Dict[str, Any]) -> Dict[str, Any]:
     if meta.get("day_index") == current_day:
         return last_plan
     return {}
+
+def _has_valid_plan(plan: Any) -> bool:
+    if not isinstance(plan, dict):
+        return False
+    meta = plan.get("meta") or {}
+    lesson = plan.get("lesson") or {}
+    if not isinstance(meta, dict) or not isinstance(lesson, dict):
+        return False
+    if not meta.get("day_index"):
+        return False
+    if not lesson.get("passage"):
+        return False
+    return True
 
 def _latest_date(records: List[Dict[str, Any]]) -> str:
     best = ""
@@ -399,7 +478,7 @@ def retrieve_memories(state: Dict[str, Any]) -> Dict[str, Any]:
         "skip_level": bool(user_prof.get("level")),
     }
     new_state["next_day"] = next_day
-    plan_ready = bool(_plan_for_current_day(thread_blob) or thread_blob.get("last_plan"))
+    plan_ready = _has_valid_plan(_plan_for_current_day(thread_blob) or thread_blob.get("last_plan"))
     # If a plan exists, go straight to speech flow (skip supervisor)
     new_state["use_speech"] = bool(plan_ready)
     new_state["plan_ready"] = plan_ready
@@ -422,13 +501,66 @@ def executor(state: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("executor: user_id / thread_id missing")
     # If user confirms start and a current-day plan exists, skip supervisor and go to speech
     latest_user = _last_human_text(state.get("messages") or [])
+    inferred_topic = _infer_topic_from_text(latest_user)
+    if not inferred_topic:
+        prev_ai = _last_ai_with_content(state.get("messages") or [])
+        inferred_topic = _infer_topic_from_ai(prev_ai.content if prev_ai else "")
+    if inferred_topic:
+        thread_blob = memory_store.load_thread(user_id, thread_id) or {}
+        if not thread_blob.get("selected_topic"):
+            memory_store.update_thread_fields(user_id, thread_id, {"selected_topic": inferred_topic})
+    inferred_level = _infer_level_from_text(latest_user)
+    if inferred_level:
+        memory_store.upsert_user_profile(user_id, level=inferred_level)
+    inferred_focus = _infer_focus_from_text(latest_user)
+    if inferred_focus:
+        memory_store.upsert_user_profile(user_id, focus=inferred_focus)
+
     if _is_start_cmd(latest_user):
         thread_blob = memory_store.load_thread(user_id, thread_id) or {}
-        if _plan_for_current_day(thread_blob) or thread_blob.get("last_plan"):
+        if _has_valid_plan(_plan_for_current_day(thread_blob) or thread_blob.get("last_plan")):
             state["use_speech"] = True
             return state
     if state.get("use_speech"):
         return state
+
+    # If info is complete, transfer directly to planner (skip supervisor)
+    thread_blob = memory_store.load_thread(user_id, thread_id) or {}
+    user_prof = memory_store.load_user_profile(user_id) or {}
+    selected_topic = thread_blob.get("selected_topic") or inferred_topic
+    level = user_prof.get("level") or inferred_level
+    focus = user_prof.get("focus") or inferred_focus
+    if selected_topic and level and focus and not _has_valid_plan(_plan_for_current_day(thread_blob) or thread_blob.get("last_plan")):
+        start_day = thread_blob.get("start_day") or datetime.utcnow().date().isoformat()
+        if not thread_blob.get("start_day"):
+            memory_store.update_thread_fields(user_id, thread_id, {"start_day": start_day})
+        transfer_payload = {
+            "user_id": user_id,
+            "thread_id": thread_id,
+            "user_profile_fields": {
+                "level": level,
+                "focus": focus,
+                "session_minutes": int(user_prof.get("session_minutes") or 10),
+                "accessibility": user_prof.get("accessibility") or "voice-friendly",
+            },
+            "thread_fields": {
+                "selected_topic": selected_topic,
+                "scenario": thread_blob.get("scenario"),
+                "start_day": start_day,
+                "current_day": thread_blob.get("current_day", 1),
+            },
+        }
+        if state.get("last_feedback"):
+            transfer_payload["last_feedback"] = state.get("last_feedback")
+        if state.get("last_rubic_score"):
+            transfer_payload["last_rubic_score"] = state.get("last_rubic_score")
+        print("[TO PLANNER]", transfer_payload, flush=True)
+        planner_agent.invoke({"messages": [HumanMessage(content=json.dumps(transfer_payload, ensure_ascii=False))]})
+        thread_blob = memory_store.load_thread(user_id, thread_id) or {}
+        state["plan_ready"] = _has_valid_plan(_plan_for_current_day(thread_blob) or thread_blob.get("last_plan"))
+        if state.get("plan_ready"):
+            state["use_speech"] = True
+            return state
     # ===== 2. Gọi supervisor =====
     initial_len = len(state["messages"])
     sup_out = supervisor.invoke({
@@ -502,10 +634,14 @@ def executor(state: Dict[str, Any]) -> Dict[str, Any]:
       })
                     # Mark plan ready for next turn
                     thread_blob = memory_store.load_thread(user_id, thread_id) or {}
-                    state["plan_ready"] = bool(_plan_for_current_day(thread_blob))
+                    state["plan_ready"] = _has_valid_plan(_plan_for_current_day(thread_blob) or thread_blob.get("last_plan"))
+                    if state["plan_ready"]:
+                        state["use_speech"] = True
+                        return state
+                    if state["plan_ready"]:
+                        state["use_speech"] = True
                     break
                   
-
     # ===== 5. Build new_state =====
     new_state = dict(state)
     new_state["user_id"] = user_id
@@ -607,7 +743,7 @@ def speech_node(state: Dict[str, Any]) -> Dict[str, Any]:
             thread_blob = memory_store.load_thread(state.get("user_id"), state.get("thread_id")) or {}
             current_day = thread_blob.get("current_day", 1)
             plan_for_day = thread_blob.get(f"last_plan_day_{current_day}")
-            if plan_for_day or thread_blob.get("last_plan"):
+            if _has_valid_plan(plan_for_day or thread_blob.get("last_plan")):
                 state = dict(state)
                 state["use_speech"] = True
             else:
