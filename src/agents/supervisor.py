@@ -149,16 +149,10 @@ supervisor = create_supervisor(
 # ===== Utilities =====
 TRANSFER_RE = re.compile(r"(^transfer_|handoff)", re.I)
 _START_CMDS = {
-    "vang",
-    "vâng",
     "ok",
     "okay",
     "yes",
     "start",
-    "bat dau",
-    "batdau",
-    "san sang",
-    "sẵn sàng",
 }
 
 def _is_start_cmd(text: str) -> bool:
@@ -169,37 +163,33 @@ def _infer_topic_from_text(text: str) -> str:
     if not t:
         return ""
     number_map = {
-        "1": "Giao tiep hang ngay",
-        "2": "Du lich",
-        "3": "Cong viec",
-        "4": "Hoc tap",
-        "5": "Suc khoe",
-        "6": "Giai tri",
+        "1": "Daily communication",
+        "2": "Travel",
+        "3": "Work",
+        "4": "Study",
+        "5": "Health",
+        "6": "Entertainment",
     }
     if t in number_map:
         return number_map[t]
     keywords = {
-        "giao tiep": "Giao tiep hang ngay",
-        "hang ngay": "Giao tiep hang ngay",
-        "du lich": "Du lich",
-        "travel": "Du lich",
-        "trip": "Du lich",
-        "vacation": "Du lich",
-        "cong viec": "Cong viec",
-        "work": "Cong viec",
-        "job": "Cong viec",
-        "office": "Cong viec",
-        "hoc tap": "Hoc tap",
-        "study": "Hoc tap",
-        "school": "Hoc tap",
-        "suc khoe": "Suc khoe",
-        "health": "Suc khoe",
-        "healthy": "Suc khoe",
-        "giai tri": "Giai tri",
-        "entertainment": "Giai tri",
-        "movie": "Giai tri",
-        "music": "Giai tri",
-        "game": "Giai tri",
+        "communication": "Daily communication",
+        "communicate": "Daily communication",
+        "daily communication": "Daily communication",
+        "travel": "Travel",
+        "trip": "Travel",
+        "vacation": "Travel",
+        "work": "Work",
+        "job": "Work",
+        "office": "Work",
+        "study": "Study",
+        "school": "Study",
+        "health": "Health",
+        "healthy": "Health",
+        "entertainment": "Entertainment",
+        "movie": "Entertainment",
+        "music": "Entertainment",
+        "game": "Entertainment",
     }
     for k, v in keywords.items():
         if k in t:
@@ -211,18 +201,15 @@ def _infer_topic_from_ai(text: str) -> str:
     if not t:
         return ""
     mapping = {
-        "giao tiếp": "Giao tiep hang ngay",
-        "giao tiep": "Giao tiep hang ngay",
-        "du lịch": "Du lich",
-        "du lich": "Du lich",
-        "công việc": "Cong viec",
-        "cong viec": "Cong viec",
-        "học tập": "Hoc tap",
-        "hoc tap": "Hoc tap",
-        "sức khoẻ": "Suc khoe",
-        "suc khoe": "Suc khoe",
-        "giải trí": "Giai tri",
-        "giai tri": "Giai tri",
+        "communicate": "Daily communication",
+        "communication": "Daily communication",
+        "daily communication": "Daily communication",
+        "travel": "Travel",
+        "work": "Work",
+        "study": "Study",
+        "health": "Health",
+        "entertainment": "Entertainment",
+
     }
     for k, v in mapping.items():
         if k in t:
