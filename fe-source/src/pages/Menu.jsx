@@ -1,5 +1,5 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 
 export default function Menu() {
   const navigate = useNavigate();
@@ -7,6 +7,103 @@ export default function Menu() {
     completed_days: 0,
     current_day: 1,
   });
+  const [listening, setListening] = useState(false);
+  const [voiceText, setVoiceText] = useState("");
+  const [speechSupported, setSpeechSupported] = useState(true);
+
+  const recogRef = useRef(null);
+  const finalTranscriptRef = useRef("");
+  const silenceTimerRef = useRef(null);
+  const startTriggeredRef = useRef(false);
+  const listeningWantedRef = useRef(false);
+  const validatingRef = useRef(false);
+  const voiceTextRef = useRef("");
+
+  const clearSilenceTimer = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  };
+  const clearTranscript = () => {
+    finalTranscriptRef.current = "";
+    voiceTextRef.current = "";
+    setVoiceText("");
+  };
+
+  const createThreadAndNavigate = () => {
+    if (startTriggeredRef.current) return;
+    startTriggeredRef.current = true;
+
+    const threadId =
+      (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) ||
+      `thread_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+    localStorage.setItem("thread_id", threadId);
+    navigate("/conversation");
+  };
+
+  const stopListening = () => {
+    listeningWantedRef.current = false;
+    clearSilenceTimer();
+
+    if (recogRef.current) {
+      try {
+        recogRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+    setListening(false);
+  };
+
+  const startListening = () => {
+    if (!recogRef.current) return;
+    listeningWantedRef.current = true;
+    try {
+      recogRef.current.start();
+      setListening(true);
+    } catch {
+      // ignore rapid start errors
+    }
+  };
+
+  const validateVoiceIntent = async (text) => {
+    if (validatingRef.current || startTriggeredRef.current) return;
+
+    const userId = localStorage.getItem("user_id");
+    if (!userId) {
+      navigate("/login");
+      return;
+    }
+
+    const payloadText = (text || "").trim();
+    if (!payloadText) return;
+
+    validatingRef.current = true;
+    try {
+      const res = await fetch("http://localhost:8000/validate-intent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          message: payloadText,
+        }),
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (data?.should_start) {
+        stopListening();
+        createThreadAndNavigate();
+      }
+    } catch {
+      // ignore connection errors for continuous voice mode
+    } finally {
+      validatingRef.current = false;
+    }
+  };
 
   useEffect(() => {
     const userId = localStorage.getItem("user_id");
@@ -38,41 +135,97 @@ export default function Menu() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    voiceTextRef.current = voiceText;
+  }, [voiceText]);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+      return;
+    }
+
+    const recog = new SpeechRecognition();
+    recog.lang = "en-US";
+    recog.interimResults = true;
+    recog.continuous = true;
+    recog.maxAlternatives = 1;
+
+    recog.onresult = (event) => {
+      let final = "";
+      let interim = "";
+
+      for (let i = 0; i < event.results.length; i += 1) {
+        const chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += chunk;
+        else interim += chunk;
+      }
+
+      const merged = `${final}${interim}`.trim();
+      if (!merged) return;
+
+      if (final) {
+        finalTranscriptRef.current = final.trim();
+      }
+      setVoiceText(merged);
+
+      clearSilenceTimer();
+      silenceTimerRef.current = setTimeout(() => {
+        const textToValidate = (finalTranscriptRef.current || voiceTextRef.current || "").trim();
+        if (textToValidate) {
+          void validateVoiceIntent(textToValidate);
+        }
+        clearTranscript();
+      }, 2000);
+    };
+
+    recog.onend = () => {
+      setListening(false);
+      if (listeningWantedRef.current && !startTriggeredRef.current) {
+        startListening();
+      }
+    };
+
+    recog.onerror = () => {
+      setListening(false);
+      if (listeningWantedRef.current && !startTriggeredRef.current) {
+        startListening();
+      }
+    };
+
+    recogRef.current = recog;
+    startListening();
+
+    return () => {
+      clearSilenceTimer();
+      listeningWantedRef.current = false;
+      try {
+        recog.stop();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
   const isNewUser = progress.completed_days === 0;
-  const highlightUpTo = isNewUser
-    ? 0
-    : Math.min(progress.completed_days + 1, 4);
+  const highlightUpTo = isNewUser ? 0 : Math.min(progress.completed_days + 1, 4);
 
   const handleLogout = () => {
+    stopListening();
     localStorage.removeItem("user_id");
     localStorage.removeItem("account");
     localStorage.removeItem("thread_id");
     navigate("/login");
   };
 
-  const handleStart = () => {
-    const userId = localStorage.getItem("user_id");
-    if (!userId) {
-      navigate("/login");
-      return;
-    }
-    const threadId =
-      (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) ||
-      `thread_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    localStorage.setItem("thread_id", threadId);
-    navigate("/conversation");
-  };
   return (
     <div className="min-h-screen bg-ink text-fog">
       <div className="mx-auto max-w-6xl px-6 py-10">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-haze">
-              Dashboard
-            </p>
-            <h1 className="text-3xl font-semibold md:text-4xl">
-              Menu học tập
-            </h1>
+            <p className="text-xs uppercase tracking-[0.35em] text-haze">Dashboard</p>
+            <h1 className="text-3xl font-semibold md:text-4xl">Menu học tập</h1>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-haze">
@@ -91,15 +244,21 @@ export default function Menu() {
           <div className="glass rounded-3xl p-8 shadow-soft">
             <h2 className="text-2xl font-semibold">Bắt đầu học</h2>
             <p className="mt-2 text-sm text-haze">
-              Chọn chủ đề hôm nay để vào phòng luyện tập ngay.
+              Bạn có thể nói tiếng Anh như: "start", "let&apos;s begin", "I want to learn now".
             </p>
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-fog">
+              MIC State: {speechSupported ? (listening ? "ON" : "OFF") : "Not supported"}
+            </div>
+            <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-haze">
+              Transcript: {voiceText || "..."}
+            </div>
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
               {[
                 { title: "Giao tiếp hằng ngày", desc: "Chào hỏi, mua sắm, hỏi đường" },
                 { title: "Du lịch", desc: "Sân bay, khách sạn, nhà hàng" },
                 { title: "Công việc", desc: "Email, họp nhóm, báo cáo" },
                 { title: "Học tập", desc: "Thuyết trình, hỏi bài, thảo luận" },
-                { title: "Sức khoẻ", desc: "Bác sĩ, thuốc, tình trạng" },
+                { title: "Sức khỏe", desc: "Bác sĩ, thuốc, tình trạng" },
                 { title: "Giải trí", desc: "Phim ảnh, sở thích, bạn bè" },
               ].map((item) => (
                 <div
@@ -110,14 +269,6 @@ export default function Menu() {
                   <p className="mt-1 text-xs text-haze">{item.desc}</p>
                 </div>
               ))}
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                onClick={handleStart}
-                className="rounded-2xl bg-ember px-5 py-3 text-sm font-medium text-white shadow-soft"
-              >
-                Bắt đầu buổi học
-              </button>
             </div>
           </div>
 
@@ -149,7 +300,7 @@ export default function Menu() {
               <ul className="mt-4 space-y-3 text-sm text-haze">
                 <li>• Ưu tiên luyện nghe 10 phút mỗi ngày.</li>
                 <li>• Chủ đề mới sẽ làm sau khi bạn chọn.</li>
-                <li>• Nhấn vào hội thoại để bắt đầu.</li>
+                <li>• Bạn có thể nói lệnh bắt đầu thay vì bấm nút.</li>
               </ul>
             </div>
           </aside>
