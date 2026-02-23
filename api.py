@@ -20,9 +20,12 @@ from src.tools.schema import (
     LoginResponse,
     SignupRequest,
     SignupResponse,
+    ValidateIntentRequest,
+    ValidateIntentResponse,
 )
 load_dotenv()
-
+from src.agents.supervisor import run_graph_with_retry
+from src.agents.validation_agent import validate_start_intent
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 if SRC_DIR not in sys.path:
@@ -229,7 +232,17 @@ def daily_status(user_id: str) -> Dict[str, Any]:
             if isinstance(rubric, dict) and rubric:
                 has_rubric = True
     return {"completed_today": completed_today, "has_rubric": has_rubric, "date": today}
-
+    
+@app.post("/validate-intent", response_model=ValidateIntentResponse)
+def validate_intent(req: ValidateIntentRequest) -> ValidateIntentResponse:
+    result = validate_start_intent(req.message)
+    return ValidateIntentResponse(
+        user_id=req.user_id,
+        should_start=bool(result["should_start"]),
+        confidence=float(result["confidence"]),
+        reason=str(result["reason"]),
+        normalized_message=str(result["normalized_message"]),
+    )
 
 if __name__ == "__main__":
     import uvicorn
