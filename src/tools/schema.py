@@ -39,7 +39,6 @@ class UpdateThreadFieldsInput(BaseModel):
     thread_id: str = Field(..., description="Thread id")
     fields_json: Optional[str] = Field(None, description="JSON string of fields to $set into thread document")
     fields: Optional[Dict[str, Any]] = Field(None, description="Dict of fields to $set into thread document")
-
 class ValidateIntentRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
     message: str = Field(..., min_length=1)

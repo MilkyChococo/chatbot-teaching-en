@@ -32,6 +32,7 @@ if SRC_DIR not in sys.path:
     sys.path.append(SRC_DIR)
 
 from src.agents.supervisor import run_graph_with_retry  # noqa: E402
+from src.agents.validation_agent import validate_start_intent  # noqa: E402
 
 app = FastAPI(title="chat-lis-speak API", version="0.1.0")
 
@@ -243,6 +244,18 @@ def validate_intent(req: ValidateIntentRequest) -> ValidateIntentResponse:
         reason=str(result["reason"]),
         normalized_message=str(result["normalized_message"]),
     )
+
+@app.post("/validate-intent", response_model=ValidateIntentResponse)
+def validate_intent(req: ValidateIntentRequest) -> ValidateIntentResponse:
+    result = validate_start_intent(req.message)
+    return ValidateIntentResponse(
+        user_id=req.user_id,
+        should_start=bool(result["should_start"]),
+        confidence=float(result["confidence"]),
+        reason=str(result["reason"]),
+        normalized_message=str(result["normalized_message"]),
+    )
+
 
 if __name__ == "__main__":
     import uvicorn
