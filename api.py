@@ -10,6 +10,7 @@ from typing import Dict, Any, Tuple
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from langchain_core.messages import HumanMessage, AIMessage
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
@@ -20,6 +21,7 @@ from src.tools.schema import (
     LoginResponse,
     SignupRequest,
     SignupResponse,
+    TextToSpeechRequest,
     ValidateIntentRequest,
     ValidateIntentResponse,
 )
@@ -33,6 +35,8 @@ if SRC_DIR not in sys.path:
 
 from src.agents.supervisor import run_graph_with_retry  # noqa: E402
 from src.agents.validation_agent import validate_start_intent  # noqa: E402
+from src.tools.google_tts import synthesize_speech_audio  # noqa: E402
+from src.tools.tts_markup import generate_assistant_tts_ssml  # noqa: E402
 
 app = FastAPI(title="chat-lis-speak API", version="0.1.0")
 
@@ -140,11 +144,19 @@ def chat(req: ChatRequest, request: Request) -> ChatResponse:
     if not last_ai:
         raise HTTPException(status_code=500, detail="no AI response generated")
     print(f"[API] last_ai.content={repr(last_ai.content)}", flush=True)
+    assistant_text = str(last_ai.content)
+    assistant_tts_ssml = None
+    try:
+        assistant_tts_ssml = generate_assistant_tts_ssml(assistant_text)
+        print(f"[API] assistant_tts_ssml={repr(assistant_tts_ssml)}", flush=True)
+    except Exception as exc:
+        print(f"[API] tts markup fallback: {exc}", flush=True)
 
     return ChatResponse(
         user_id=req.user_id,
         thread_id=req.thread_id,
-        assistant_message=str(last_ai.content),
+        assistant_message=assistant_text,
+        assistant_tts_ssml=assistant_tts_ssml,
         should_exit=bool(state.get("should_exit")),
     )
 
@@ -254,6 +266,27 @@ def validate_intent(req: ValidateIntentRequest) -> ValidateIntentResponse:
         confidence=float(result["confidence"]),
         reason=str(result["reason"]),
         normalized_message=str(result["normalized_message"]),
+    )
+
+
+@app.post("/tts")
+def text_to_speech(req: TextToSpeechRequest) -> Response:
+    try:
+        audio_content = synthesize_speech_audio(
+            text=req.text,
+            ssml=req.ssml,
+            lang=req.lang,
+            speaking_rate=req.speaking_rate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"google tts failed: {exc}")
+
+    return Response(
+        content=audio_content,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-store"},
     )
 
 

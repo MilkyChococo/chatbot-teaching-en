@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
+
+
 class ChatRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
     thread_id: str = Field(..., min_length=1)
@@ -11,6 +13,7 @@ class ChatResponse(BaseModel):
     user_id: str
     thread_id: str
     assistant_message: str
+    assistant_tts_ssml: Optional[str] = None
     should_exit: bool = False
 
 
@@ -50,3 +53,10 @@ class ValidateIntentResponse(BaseModel):
     confidence: float
     reason: str
     normalized_message: str
+
+
+class TextToSpeechRequest(BaseModel):
+    text: str = Field(default="", max_length=5000)
+    ssml: Optional[str] = Field(default=None, max_length=12000)
+    lang: str = Field(default="vi-VN", min_length=2, max_length=16)
+    speaking_rate: float = Field(default=1.0, ge=0.25, le=2.0)

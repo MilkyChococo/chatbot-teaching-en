@@ -1,6 +1,9 @@
 ﻿import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const TTS_EN_VOICE = "en-US-Neural2-C";
+
 export default function Conversation() {
   const navigate = useNavigate();
 
@@ -38,7 +41,9 @@ export default function Conversation() {
   const onErrorRef = useRef(null);
 
   const sendMessageRef = useRef(null);
-  const speechFallbackRef = useRef(null);
+  const activeAudioRef = useRef(null);
+  const activeAudioUrlRef = useRef(null);
+  const speechAbortRef = useRef(null);
   const speechSeqRef = useRef(0);
   const activeSpeechSeqRef = useRef(0);
   const emptySpeechRetryRef = useRef(null);
@@ -141,11 +146,67 @@ export default function Conversation() {
     return segments;
   };
 
-  const clearSpeechFallback = () => {
-    if (speechFallbackRef.current) {
-      clearTimeout(speechFallbackRef.current);
-      speechFallbackRef.current = null;
+  const escapeSsml = (value) =>
+    (value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+
+  const buildTtsSsml = (value, baseLang) => {
+    const text = value || "";
+    const segments = splitBilingualSegments(text);
+    if (!segments.length) {
+      return `<speak>${escapeSsml(text)}</speak>`;
     }
+
+    const body = segments
+      .map((seg) => {
+        const segText = escapeSsml(seg.text || "");
+        if (!segText) return "";
+
+        const segLang = seg.lang || baseLang;
+        if (segLang === baseLang) {
+          return segText;
+        }
+
+        if (segLang === "en-US") {
+          return `<voice name="${TTS_EN_VOICE}">${segText}</voice>`;
+        }
+
+        return `<lang xml:lang="${segLang}">${segText}</lang>`;
+      })
+      .join("");
+
+    return `<speak>${body}</speak>`;
+  };
+
+  const revokeActiveAudioUrl = () => {
+    if (!activeAudioUrlRef.current) return;
+    URL.revokeObjectURL(activeAudioUrlRef.current);
+    activeAudioUrlRef.current = null;
+  };
+
+  const stopActiveAudio = () => {
+    if (speechAbortRef.current) {
+      speechAbortRef.current.abort();
+      speechAbortRef.current = null;
+    }
+
+    const audio = activeAudioRef.current;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      try {
+        audio.pause();
+      } catch {
+        // ignore
+      }
+      activeAudioRef.current = null;
+    }
+
+    revokeActiveAudioUrl();
   };
 
   const clearEmptySpeechRetry = () => {
@@ -223,11 +284,9 @@ export default function Conversation() {
     }
   };
 
-  const speakText = (text) => {
+  const speakText = (text, providedSsml = "") => {
     const t = (text || "").trim();
     if (!t) return false;
-    if (!window.speechSynthesis) return false;
-
     if (lastSpokenRef.current === t) return false;
     lastSpokenRef.current = t;
 
@@ -235,22 +294,28 @@ export default function Conversation() {
     speechSeqRef.current = speechSeq;
     activeSpeechSeqRef.current = speechSeq;
 
-    clearSpeechFallback();
     clearSilenceSendTimer();
 
     phaseRef.current = "speaking";
     isAgentSpeakingRef.current = true;
 
     stopListening();
+    stopActiveAudio();
 
-    window.speechSynthesis.cancel();
-
-    const segments = splitBilingualSegments(t);
+    const baseLang = detectLang(t);
+    const ssml = (providedSsml || "").trim() || buildTtsSsml(t, baseLang);
+    const controller = new AbortController();
+    speechAbortRef.current = controller;
+    console.log("[tts] ssml", ssml);
 
     const finishSpeaking = () => {
       if (activeSpeechSeqRef.current !== speechSeq) return;
+      if (speechAbortRef.current === controller) {
+        speechAbortRef.current = null;
+      }
       isAgentSpeakingRef.current = false;
-      clearSpeechFallback();
+      activeAudioRef.current = null;
+      revokeActiveAudioUrl();
 
       phaseRef.current = "idle";
       if (!lockedRef.current && autoListenRef.current) {
@@ -258,65 +323,95 @@ export default function Conversation() {
       }
     };
 
-    let segIndex = 0;
-    const speakNext = () => {
-      if (activeSpeechSeqRef.current !== speechSeq) return;
-      if (segIndex >= segments.length) {
-        finishSpeaking();
-        return;
-      }
+    const playAudioBlob = (blob) =>
+      new Promise((resolve) => {
+        const url = URL.createObjectURL(blob);
+        revokeActiveAudioUrl();
+        activeAudioUrlRef.current = url;
 
-      const seg = segments[segIndex];
-      segIndex += 1;
-      const segText = (seg.text || "").trim();
-      if (!segText) {
-        speakNext();
-        return;
-      }
+        const audio = new Audio(url);
+        activeAudioRef.current = audio;
 
-      const utter = new SpeechSynthesisUtterance(segText);
-      utter.lang = seg.lang || "en-US";
-      utter.rate = 1;
+        let settled = false;
+        const settle = (played) => {
+          if (settled) return;
+          settled = true;
+          audio.onended = null;
+          audio.onerror = null;
+          if (activeAudioRef.current === audio) {
+            activeAudioRef.current = null;
+          }
+          if (activeAudioUrlRef.current === url) {
+            URL.revokeObjectURL(url);
+            activeAudioUrlRef.current = null;
+          } else {
+            URL.revokeObjectURL(url);
+          }
+          resolve(played);
+        };
 
-      utter.onstart = () => {
-        if (activeSpeechSeqRef.current !== speechSeq) return;
-        phaseRef.current = "speaking";
-        isAgentSpeakingRef.current = true;
-        stopListening();
-      };
+        audio.onplay = () => {
+          if (activeSpeechSeqRef.current !== speechSeq) {
+            try {
+              audio.pause();
+            } catch {
+              // ignore
+            }
+            settle(false);
+            return;
+          }
+          phaseRef.current = "speaking";
+          isAgentSpeakingRef.current = true;
+          stopListening();
+        };
 
-      utter.onend = () => {
-        if (activeSpeechSeqRef.current !== speechSeq) return;
-        speakNext();
-      };
+        audio.onended = () => settle(true);
+        audio.onerror = () => settle(false);
 
-      utter.onerror = () => {
-        if (activeSpeechSeqRef.current !== speechSeq) return;
-        speakNext();
-      };
-
-      window.speechSynthesis.speak(utter);
-    };
-
-    speakNext();
-
-    const approxMs = Math.min(15000, Math.max(1200, t.length * 55));
-    let retryLeft = 6;
-    const fallbackTick = () => {
-      if (activeSpeechSeqRef.current !== speechSeq) return;
-      const synth = window.speechSynthesis;
-      if (synth && (synth.speaking || synth.pending)) {
-        if (retryLeft > 0) {
-          retryLeft -= 1;
-          speechFallbackRef.current = setTimeout(fallbackTick, 500);
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => settle(false));
         }
-        return;
-      }
-      if (!lockedRef.current && autoListenRef.current && isAgentSpeakingRef.current) {
+      });
+
+    const runTts = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: t,
+            ssml,
+            lang: baseLang,
+            speaking_rate: 1,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          let detail = "Google TTS request failed";
+          try {
+            const data = await res.json();
+            detail = data?.detail || detail;
+          } catch {
+            // ignore
+          }
+          throw new Error(detail);
+        }
+
+        const audioBlob = await res.blob();
+        if (activeSpeechSeqRef.current !== speechSeq) return;
+        await playAudioBlob(audioBlob);
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.error("[tts] google cloud failed", err);
+        }
+      } finally {
         finishSpeaking();
       }
     };
-    speechFallbackRef.current = setTimeout(fallbackTick, approxMs);
+
+    runTts();
 
     return true;
   };
@@ -352,7 +447,7 @@ export default function Conversation() {
     loadingRef.current = true;
 
     try {
-      const res = await fetch("http://localhost:8000/chat", {
+      const res = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Request-Id": reqId },
         body: JSON.stringify({
@@ -389,6 +484,7 @@ export default function Conversation() {
       }
 
       const assistantText = (data && data.assistant_message) || "";
+      const assistantTtsSsml = (data && data.assistant_tts_ssml) || "";
       if (!assistantText.trim()) {
         phaseRef.current = "idle";
         setMessages((prev) => [
@@ -402,7 +498,7 @@ export default function Conversation() {
       setMessages((prev) => [...prev, { from: "coach", text: assistantText }]);
 
       // assistant nói xong -> auto startListening trong speakText.onend
-      const spoken = speakText(assistantText);
+      const spoken = speakText(assistantText, assistantTtsSsml);
       if (!spoken) {
         // không TTS được thì quay lại nghe luôn
         phaseRef.current = "idle";
@@ -443,6 +539,14 @@ export default function Conversation() {
   useEffect(() => {
     sendMessageRef.current = sendMessage;
   });
+
+  useEffect(() => {
+    return () => {
+      stopActiveAudio();
+      clearEmptySpeechRetry();
+      clearSilenceSendTimer();
+    };
+  }, []);
 
   // Scroll chat
   useEffect(() => {
@@ -585,7 +689,7 @@ export default function Conversation() {
         }
 
         const res = await fetch(
-          `http://localhost:8000/daily-status?user_id=${encodeURIComponent(userId)}`
+          `${API_BASE_URL}/daily-status?user_id=${encodeURIComponent(userId)}`
         );
 
         if (!res.ok) return;
@@ -611,7 +715,7 @@ export default function Conversation() {
         if (!greetedRef.current) {
           greetedRef.current = true;
           const greeting =
-            "Xin chào bạn, đây là chatbot hỗ trợ học tiếng Anh. Bạn vui lòng nói tiếng Anh trong suốt quá trình nhé.";
+            "Xin chào bạn, đây là chat bot hỗ trợ học tiếng Anh. Bạn vui lòng nói tiếng Anh trong suốt quá trình nhé.";
 
           setMessages((prev) => [...prev, { from: "coach", text: greeting }]);
           const spoken = speakText(greeting);
