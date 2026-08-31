@@ -13,6 +13,7 @@ dependencies = [
     "langgraph",
     "langgraph-supervisor",
     "google-cloud-aiplatform",
+    "langchain-google-vertexai",
 ]
 
 [tool.vercel]
