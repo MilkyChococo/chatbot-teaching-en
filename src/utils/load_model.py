@@ -7,7 +7,7 @@ import vertexai
 import os
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-SERVICE_ACCOUNT_PATH = BASE_DIR / "service-account.json"
+SERVICE_ACCOUNT_PATH = BASE_DIR / "service_account.json"
 
 credentials = service_account.Credentials.from_service_account_file(
     SERVICE_ACCOUNT_PATH
