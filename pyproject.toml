@@ -1,2 +1,19 @@
+[project]
+name = "chatbot-teaching-en"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-dotenv",
+    "pymongo",
+    "pydantic",
+    "langchain",
+    "langchain-core",
+    "langgraph",
+    "langgraph-supervisor",
+    "google-cloud-aiplatform",
+]
+
 [tool.vercel]
 entrypoint = "api:app"
